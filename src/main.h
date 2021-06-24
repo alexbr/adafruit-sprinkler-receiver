@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <TimeLib.h>
 
+
 #define TRIGGER_PIN_ON 13 // For 24V relay switching
 #define TRIGGER_PIN_OFF 15 // For 24V relay switching
 
