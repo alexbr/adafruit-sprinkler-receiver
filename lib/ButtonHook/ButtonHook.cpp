@@ -4,18 +4,50 @@
 
 #include "ButtonHook.h"
 #include <Arduino.h>
+#include <iterator>
 
-ButtonHook::ButtonHook() { this->buttons = new Button[0]; }
-
-void ButtonHook::checkButtons() {
+Button::Button(int pin, ButtonPressedCallback callback) {
+    this->pin = pin;
+    this->callback = callback;
+    this->state = HIGH;
 }
 
-void ButtonHook::registerButton(int buttonPin) {
-    int numButtons = sizeof(this->buttons);
-    Button newButtons[numButtons + 1];
-    memcpy(this->buttons, newButtons, numButtons);
-    Button button;
-    button.pin = buttonPin;
-    newButtons[numButtons] = button;
-    this->buttons = newButtons;
+ButtonHook::ButtonHook(int longPressDuration) {
+   this->buttons = {};
+   this->longPressDuration = longPressDuration;
+}
+
+void ButtonHook::checkButtons() {
+   std::vector<Button>::iterator it;
+   for (it = this->buttons.begin(); it != this->buttons.end(); ++it) {
+      Button& button = *it;
+
+      int buttonState = digitalRead(button.pin);
+
+      // Button pressed
+      if (buttonState == LOW) {
+         // Switch from unpressed to pressed
+         if (buttonState != button.state) {
+            button.pressStart = millis();
+         }
+      } else {
+         if (buttonState != button.state) {
+            // Switch from pressed to not pressed
+            unsigned long buttonDuration = millis() - button.pressStart;
+
+            if (buttonDuration > this->longPressDuration) {
+               button.callback(/* longPress= */ true);
+            } else {
+               button.callback(/* longPress= */ false);
+            }
+         }
+      }
+
+      button.state = buttonState;
+   }
+}
+
+void ButtonHook::registerButton(int buttonPin, ButtonPressedCallback callback) {
+   Button button(buttonPin, callback);
+   this->buttons.push_back(button);
 }

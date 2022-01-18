@@ -6,6 +6,7 @@
 
 #include "main.h"
 #include "secrets.h"
+#include "ButtonHook.h"
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266Ping.h>
@@ -20,8 +21,8 @@
 // Sprinkler state
 enum SprinklerState { ON, OFF, UNKNOWN };
 SprinklerState sprinklerState = UNKNOWN;
-long sprinklerStart = 0;
-long manualOverride = 0;
+unsigned long sprinklerStart = 0;
+unsigned long manualOverride = 0;
 time_t sprinklerStartTime = 0;
 char sprinklerStartDisplay[50] = "Start: N/A\n";
 char sprinklerDurationDisplay[50] = "Run: N/A\n";
@@ -32,14 +33,10 @@ unsigned long checkServerTime = 0;
 
 // Display
 Adafruit_SSD1306 display = Adafruit_SSD1306(128, 32, &Wire);
+unsigned long turnDisplayOff = 0;
 
 // Button handling
-int buttonAState;
-int buttonBState;
-int buttonCState;
-int buttonPressed;
-unsigned long buttonPressStart = 0;
-unsigned long buttonPressDuration = 0;
+ButtonHook buttonHook(LONG_PRESS);
 
 // NTP
 IPAddress timeServer(129, 6, 15, 28);
@@ -59,13 +56,15 @@ void setup() {
    pinMode(BUTTON_B, INPUT_PULLUP);
    pinMode(BUTTON_C, INPUT_PULLUP);
 
+   buttonHook.registerButton(BUTTON_A, &buttonAPressed);
+   buttonHook.registerButton(BUTTON_C, &buttonCPressed);
+
    display.begin(SSD1306_SWITCHCAPVCC, 0x3C); // Address 0x3C for 128x32
-
    Serial.println("OLED begun");
-
-   // Display splash
-   display.display();
-
+   
+   displayOnWithTimeout();
+   
+   display.dim(true);
    display.setTextSize(1);
    display.setTextColor(SSD1306_WHITE);
    printDisplay("connecting internet...");
@@ -104,14 +103,24 @@ void setup() {
 }
 
 void loop() {
-   if (manualOverride > 0) {
-      if (millis() > manualOverride) {
-         sprinklerOff();
+   buttonHook.checkButtons();
+   
+   if (millis() >= turnDisplayOff) {
+      display.clearDisplay();
+      display.display();
+   }
+
+   // Check if sprinkler override is on
+   if (manualOverride != 0) {
+      // If override has expired, turn the sprinkler off
+      if (manualOverride < millis()) {
          manualOverride = 0;
-      }
+         sprinklerOff();
+     }
    } else if (millis() > checkServerTime) {
+      // If not, check the server to see if the sprinkler is scheduled to be on
       server.handleClient();
-      checkServerTime = millis() + 500;
+      checkServerTime = millis() + CHECK_SERVER_DELAY;
    }
 
    // Failsafe if sprinkler is running too long
@@ -124,7 +133,7 @@ void loop() {
       const char* format = "Sprinkler running for\n%lu min(s)";
       char buffer[strlen(format) + 6];
       long duration = millis() - sprinklerStart;
-      sprintf(buffer, "Sprinkler running for\n%.1f min(s)", duration / 60000);
+      sprintf(buffer, "Sprinkler running for\n%.1f min(s)", duration / 60000.0);
       printDisplay(buffer);
    } else {
       char buffer[strlen(sprinklerStartDisplay) + strlen(sprinklerDurationDisplay) + 1];
@@ -133,30 +142,20 @@ void loop() {
    }
 }
 
-void checkButtons() {
-   unsigned long longPress = 1000;
-   int buttonState = digitalRead(BUTTON_A);
+void buttonAPressed(bool longPress) { displayOnWithTimeout(); }
 
-   // Button A pressed
-   if (buttonState == HIGH) {
-      // Switch from unpressed to pressed
-      if (buttonState != buttonAState) {
-         buttonPressStart = millis();
-      }
-   } else { // Button A not pressed
-            // Switch from pressed to not pressed
-      if (buttonState != buttonAState) {
-         unsigned long buttonDuration = millis() - buttonPressStart;
-         if (buttonDuration > longPress) {
-            Serial.println("long press on A, manual override");
-            manualOverride = millis() + (30 * 60000);
-            sprinklerOn();
-         } else {
-            Serial.println("short press on A");
-         }
-      }
+void buttonCPressed(bool longPress) { toggleOverride(); }
+
+void toggleOverride() {
+   // Override is on, turn it off
+   if (millis() < manualOverride) {
+      manualOverride = 0;
+      sprinklerOff();
+   } else {
+      manualOverride = millis() + MANUAL_OVERRIDE;
+      displayOnWithTimeout();
+      sprinklerOn();
    }
-   buttonAState = buttonState;
 }
 
 void sprinklerOn() {
@@ -181,7 +180,7 @@ void sprinklerOff() {
    if (sprinklerState == UNKNOWN || sprinklerState == ON) {
       if (sprinklerState == ON) {
          long duration = millis() - sprinklerStart;
-         sprintf(sprinklerDurationDisplay, "Duration:\n%.1f min(s)", duration / 60000);
+         sprintf(sprinklerDurationDisplay, "Duration:\n%.1f min(s)", duration / 60000.0);
       }
       
       sprinklerState = OFF;
@@ -195,8 +194,18 @@ void sprinklerOff() {
    }
 }
 
+void displayOnWithTimeout() {
+   turnDisplayOff = millis() + DISPLAY_TIMEOUT;
+}
+
 void printDisplay(String str) {
    display.clearDisplay();
+   
+   if (turnDisplayOff <= millis()) {
+      display.display();
+      return;
+   }
+   
    display.setCursor(0,0);
    display.println(str);
    display.display();
