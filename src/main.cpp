@@ -33,6 +33,7 @@ unsigned long lastRunDurationMs = 0;
 // Internet setup
 ESP8266WebServer server(80);
 unsigned long checkServerTime = 0;
+unsigned long lastHeapLog = 0; // for periodic heap logging
 
 // Display
 Adafruit_SSD1306 display = Adafruit_SSD1306(128, 32, &Wire);
@@ -144,6 +145,12 @@ void loop() {
       char buffer[sizeof(sprinklerStartDisplay) + sizeof(sprinklerDurationDisplay) + 2];
       snprintf(buffer, sizeof(buffer), "%s\n%s", sprinklerStartDisplay, sprinklerDurationDisplay);
       printDisplay(buffer);
+   }
+
+   // Periodic heap logging to help diagnose fragmentation/leaks
+   if (millis() - lastHeapLog >= 60000UL) {
+      lastHeapLog = millis();
+      Serial.printf("heap free=%u frag=%d\n", ESP.getFreeHeap(), ESP.getHeapFragmentation());
    }
 }
 
