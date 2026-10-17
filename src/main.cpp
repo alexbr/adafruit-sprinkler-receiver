@@ -27,6 +27,9 @@ time_t sprinklerStartTime = 0;
 char sprinklerStartDisplay[50] = "Start: N/A\n";
 char sprinklerDurationDisplay[50] = "Run: N/A\n";
 
+time_t lastRunStartTime = 0;
+unsigned long lastRunDurationMs = 0;
+
 // Internet setup
 ESP8266WebServer server(80);
 unsigned long checkServerTime = 0;
@@ -87,10 +90,13 @@ void setup() {
    WiFi.setAutoConnect(true);
    
    printStringLn("internet initialized");
-   printDisplay("IP: " + WiFi.localIP().toString());
+   char ipBuffer[32];
+   snprintf(ipBuffer, sizeof(ipBuffer), "IP: %s", WiFi.localIP().toString().c_str());
+   printDisplay(ipBuffer);
 
    server.on("/on", sprinklerOn);
    server.on("/off", sprinklerOff);
+   server.on("/last_run", HTTP_GET, lastRunHandler);
    server.begin();
 
    printStringLn("HTTP server started");
@@ -113,10 +119,10 @@ void loop() {
    // Check if sprinkler override is on
    if (manualOverride != 0) {
       // If override has expired, turn the sprinkler off
-      if (manualOverride < millis()) {
+      if ((long)(millis() - manualOverride) >= 0) {
          manualOverride = 0;
          sprinklerOff();
-     }
+      }
    } else if (millis() > checkServerTime) {
       // If not, check the server to see if the sprinkler is scheduled to be on
       server.handleClient();
@@ -130,14 +136,13 @@ void loop() {
    }
 
    if (sprinklerState == ON) {
-      const char* format = "Sprinkler running for\n%lu min(s)";
-      char buffer[strlen(format) + 6];
-      long duration = millis() - sprinklerStart;
-      sprintf(buffer, "Sprinkler running for\n%.1f min(s)", duration / 60000.0);
+      char buffer[64];
+      unsigned long duration = millis() - sprinklerStart;
+      snprintf(buffer, sizeof(buffer), "Sprinkler running for\n%lu min(s)", duration / 60000UL);
       printDisplay(buffer);
    } else {
-      char buffer[strlen(sprinklerStartDisplay) + strlen(sprinklerDurationDisplay) + 1];
-      sprintf(buffer, "%s\n%s", sprinklerStartDisplay, sprinklerDurationDisplay);
+      char buffer[sizeof(sprinklerStartDisplay) + sizeof(sprinklerDurationDisplay) + 2];
+      snprintf(buffer, sizeof(buffer), "%s\n%s", sprinklerStartDisplay, sprinklerDurationDisplay);
       printDisplay(buffer);
    }
 }
@@ -148,7 +153,7 @@ void buttonCPressed(bool longPress) { toggleOverride(); }
 
 void toggleOverride() {
    // Override is on, turn it off
-   if (millis() < manualOverride) {
+   if ((long)(manualOverride - millis()) > 0) {
       manualOverride = 0;
       sprinklerOff();
    } else {
@@ -164,8 +169,10 @@ void sprinklerOn() {
       sprinklerState = ON;
       sprinklerStart = millis();
       time_t t = myTZ.toLocal(now());
-      sprintf(sprinklerStartDisplay, "Start:\n%d-%02d-%02d %02d:%02d", year(t),
-              month(t), day(t), hour(t), minute(t));
+      lastRunStartTime = t;
+      snprintf(sprinklerStartDisplay, sizeof(sprinklerStartDisplay),
+               "Start:\n%d-%02d-%02d %02d:%02d",
+               year(t), month(t), day(t), hour(t), minute(t));
       printStringLn("turning sprinkler on");
 
       // pulse high for 10ms to latch
@@ -179,8 +186,10 @@ void sprinklerOff() {
    printStringLn("sprinkler off");
    if (sprinklerState == UNKNOWN || sprinklerState == ON) {
       if (sprinklerState == ON) {
-         long duration = millis() - sprinklerStart;
-         sprintf(sprinklerDurationDisplay, "Duration:\n%.1f min(s)", duration / 60000.0);
+         unsigned long duration = millis() - sprinklerStart;
+         lastRunDurationMs = duration;
+         snprintf(sprinklerDurationDisplay, sizeof(sprinklerDurationDisplay),
+                  "Duration:\n%lu min(s)", duration / 60000UL);
       }
       
       sprinklerState = OFF;
@@ -198,7 +207,7 @@ void displayOnWithTimeout() {
    turnDisplayOff = millis() + DISPLAY_TIMEOUT;
 }
 
-void printDisplay(String str) {
+void printDisplay(const char *str) {
    display.clearDisplay();
    
    if (turnDisplayOff <= millis()) {
@@ -212,8 +221,32 @@ void printDisplay(String str) {
    display.setCursor(0,0);
 }
 
+void printDisplay(String str) {
+   printDisplay(str.c_str());
+}
+
 time_t getTime() {
    return ntpClient.getTime();
+}
+
+void lastRunHandler() {
+   if (lastRunStartTime == 0) {
+      server.send(204, "application/json", "{}");
+      return;
+   }
+
+   time_t t = lastRunStartTime;
+   char timebuf[32];
+   snprintf(timebuf, sizeof(timebuf), "%04d-%02d-%02d %02d:%02d",
+            year(t), month(t), day(t), hour(t), minute(t));
+
+   unsigned long mins = lastRunDurationMs / 60000UL;
+   char jsonbuf[128];
+   snprintf(jsonbuf, sizeof(jsonbuf),
+            "{\"start\":\"%s\",\"duration_min\":%lu}",
+            timebuf, mins);
+
+   server.send(200, "application/json", jsonbuf);
 }
 
 void printString(const char *str) {
