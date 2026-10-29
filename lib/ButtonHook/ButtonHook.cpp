@@ -21,29 +21,19 @@ void ButtonHook::checkButtons() {
    std::vector<Button>::iterator it;
    for (it = this->buttons.begin(); it != this->buttons.end(); ++it) {
       Button& button = *it;
-
       int buttonState = digitalRead(button.pin);
 
-      // Button pressed
-      if (buttonState == LOW) {
-         // Switch from unpressed to pressed
-         if (buttonState != button.state) {
-            button.pressStart = millis();
-         }
-      } else {
-         if (buttonState != button.state) {
-            // Switch from pressed to not pressed
-            unsigned long buttonDuration = millis() - button.pressStart;
-
-            if (buttonDuration > this->longPressDuration) {
-               button.callback(/* longPress= */ true);
-            } else {
-               button.callback(/* longPress= */ false);
-            }
-         }
+      // Button is active-low (INPUT_PULLUP), so LOW means pressed.
+      if (buttonState == LOW && button.state == HIGH) {
+         button.pressStart = millis();
+         button.state = LOW;
+         Serial.printf("button pin=%d pressed start=%lu\n", button.pin, button.pressStart);
+      } else if (buttonState == HIGH && button.state == LOW) {
+         unsigned long buttonDuration = millis() - button.pressStart;
+         Serial.printf("button pin=%d released duration=%lu\n", button.pin, buttonDuration);
+         button.callback(buttonDuration > this->longPressDuration);
+         button.state = HIGH;
       }
-
-      button.state = buttonState;
    }
 }
 
