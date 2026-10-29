@@ -64,8 +64,7 @@ void setup() {
   // Setup relay pins
   pinMode(TRIGGER_PIN_ON, OUTPUT);
   pinMode(TRIGGER_PIN_OFF, OUTPUT);
-  digitalWrite(TRIGGER_PIN_ON, LOW);
-  digitalWrite(TRIGGER_PIN_OFF, LOW);
+  pulseLatch(TRIGGER_PIN_OFF);
 
   // Setup buttons
   pinMode(BUTTON_A, INPUT_PULLUP);
@@ -151,7 +150,7 @@ void loop() {
   if (sprinklerState == ON) {
     char buffer[64];
     unsigned long duration = millis() - sprinklerStart;
-    snprintf(buffer, sizeof(buffer), "Sprinkler running for\n%.1f min(s)",
+    snprintf(buffer, sizeof(buffer), "Sprinkler running for\n%.2f min(s)",
              duration / 60000.0);
     printDisplay(buffer);
   } else {
