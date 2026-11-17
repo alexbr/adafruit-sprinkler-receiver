@@ -27,7 +27,7 @@ unsigned long sprinklerStart = 0;
 unsigned long manualOverride = 0;
 time_t sprinklerStartTime = 0;
 char sprinklerStartDisplay[50] = "Hello\n";
-char sprinklerDurationDisplay[50] = "Rodriguez Fam!\n";
+char sprinklerDurationDisplay[50] = "Rodriguez!";
 
 time_t lastRunStartTime = 0;
 unsigned long lastRunDurationMs = 0;
@@ -39,6 +39,7 @@ unsigned long lastHeapLog = 0;  // for periodic heap logging
 
 // Display
 Adafruit_SH1107 display = Adafruit_SH1107(64, 128, &Wire);
+bool displayInfoOverride = true;
 unsigned long turnDisplayOff = 0;
 static int16_t displayScrollOffset = 0;
 static int16_t displayMaxScroll = 0;
@@ -109,8 +110,8 @@ void setup() {
   WiFi.setAutoReconnect(true);
 
   printStringLn("internet initialized");
-  char ipBuffer[32];
-  snprintf(ipBuffer, sizeof(ipBuffer), "IP: %s",
+  char ipBuffer[64];
+  snprintf(ipBuffer, sizeof(ipBuffer), "IP:\n%s",
            WiFi.localIP().toString().c_str());
   printDisplay(ipBuffer);
 
@@ -132,6 +133,7 @@ void loop() {
   buttonHook.checkButtons();
 
   if (millis() >= turnDisplayOff) {
+    displayInfoOverride = false;
     display.clearDisplay();
     display.display();
   }
@@ -153,8 +155,14 @@ void loop() {
     setSprinklerOff();
   }
 
-  // Display sprinkler state
-  if (sprinklerState == ON) {
+  // Display info override
+  if (displayInfoOverride) {
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), "IP:\n%s",
+             WiFi.localIP().toString().c_str());
+    printDisplay(buffer);
+  } else if (sprinklerState == ON) {
+    // Display sprinkler state
     char buffer[64];
     unsigned long duration = millis() - sprinklerStart;
     if (manualOverride != 0) {
@@ -181,11 +189,20 @@ void loop() {
   }
 }
 
-void buttonAPressed(bool longPress) { sprinklerOnButtonHandler(longPress); }
+void buttonAPressed(bool longPress) { 
+  displayInfoOverride = false;
+  sprinklerOnButtonHandler(longPress); 
+}
 
-void buttonBPressed(bool longPress) { sprinklerOffButtonHandler(); }
+void buttonBPressed(bool longPress) { 
+  displayInfoOverride = false;
+  sprinklerOffButtonHandler(); 
+}
 
-void buttonCPressed(bool longPress) { displayOnWithTimeout(); }
+void buttonCPressed(bool longPress) { 
+  displayInfoOverride = longPress;
+  displayOnWithTimeout();
+}
 
 void sprinklerOnButtonHandler(bool longPress) {
   // Set the override timeout and turn on the sprinkler
@@ -317,6 +334,7 @@ void printDisplay(const char* str) {
   }
 
   scrollDisplayText(str);
+
   display.display();
   display.setCursor(0, 0);
 }
@@ -416,7 +434,6 @@ static void scrollDisplayText(const char* str) {
   }
 
 }
-
 
 time_t getTime() { return ntpClient.getTime(); }
 
