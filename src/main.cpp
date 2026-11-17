@@ -23,7 +23,9 @@
 
 // Sprinkler state
 enum SprinklerState { ON, OFF, UNKNOWN };
+enum IrrigationRunType { AUTOMATIC, MANUAL };
 SprinklerState sprinklerState = UNKNOWN;
+IrrigationRunType currentRunType = AUTOMATIC;
 unsigned long sprinklerStart = 0;
 unsigned long manualOverride = 0;
 time_t sprinklerStartTime = 0;
@@ -33,6 +35,7 @@ char sprinklerDurationDisplay[50] = "Rodriguez!";
 time_t lastRunStartTime = 0;
 time_t lastRunStartEpoch = 0;
 unsigned long lastRunDurationMs = 0;
+IrrigationRunType lastRunType = AUTOMATIC;
 
 // Internet setup
 WebServer server(80);
@@ -68,7 +71,8 @@ static void setSprinklerOn();
 static void setSprinklerOff();
 static void pulseLatch(int pin);
 static void scrollDisplayText(const char* str);
-static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs);
+static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs,
+                              IrrigationRunType runType);
 
 void setup() {
   Serial.begin(115200);
@@ -196,6 +200,7 @@ void loop() {
 
 void buttonAPressed(bool longPress) {
   displayInfoOverride = false;
+  currentRunType = MANUAL;
   sprinklerOnButtonHandler(longPress);
 }
 
@@ -236,6 +241,7 @@ void sprinklerOnWebHandler() {
     return;
   }
 
+  currentRunType = AUTOMATIC;
   setSprinklerOn();
   server.send(200, "application/json", "{\"status\":\"on\"}");
 }
@@ -285,6 +291,7 @@ static void setSprinklerOff() {
     duration = millis() - sprinklerStart;
     startEpoch = lastRunStartEpoch;
     lastRunDurationMs = duration;
+    lastRunType = currentRunType;
     sprinklerState = OFF;
     sprinklerStart = 0;
 
@@ -297,11 +304,12 @@ static void setSprinklerOff() {
 
   // Record only runs that actually transitioned from ON to OFF.
   if (completedRun) {
-    writeRunToInfluxDB(startEpoch, duration);
+    writeRunToInfluxDB(startEpoch, duration, lastRunType);
   }
 }
 
-static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs) {
+static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs,
+                              IrrigationRunType runType) {
   HTTPClient http;
   http.setTimeout(2000);
   if (!http.begin(INFLUXDB_WRITE_URL)) {
@@ -309,18 +317,18 @@ static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs) {
     return;
   }
 
+  const char* runTypeTag = (runType == MANUAL) ? "manual" : "automatic";
   char lineProtocol[128];
   int lineLength;
-  // Use the run's UTC start time when NTP is available; otherwise let InfluxDB
-  // assign the write time.
   if (startEpoch >= 1609459200) {
     long long timestampMs = (long long)startEpoch * 1000LL;
     lineLength = snprintf(lineProtocol, sizeof(lineProtocol),
-                          "irrigation_run duration_ms=%lui %lld",
-                          durationMs, timestampMs);
+                          "irrigation_run,run_type=%s duration_ms=%lui %lld",
+                          runTypeTag, durationMs, timestampMs);
   } else {
     lineLength = snprintf(lineProtocol, sizeof(lineProtocol),
-                          "irrigation_run duration_ms=%lui", durationMs);
+                          "irrigation_run,run_type=%s duration_ms=%lui",
+                          runTypeTag, durationMs);
   }
 
   int responseCode = http.POST((uint8_t*)lineProtocol, lineLength);
