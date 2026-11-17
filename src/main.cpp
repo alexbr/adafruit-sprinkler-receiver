@@ -41,8 +41,6 @@ IrrigationRunType lastRunType = AUTOMATIC;
 WebServer server(80);
 unsigned long checkServerTime = 0;
 unsigned long lastHeapLog = 0;  // for periodic heap logging
-static const char* INFLUXDB_WRITE_URL =
-    "http://ha-server.rodriguez.lan:8086/write?precision=ms";
 
 // Display
 Adafruit_SH1107 display = Adafruit_SH1107(64, 128, &Wire);
@@ -312,7 +310,9 @@ static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs,
                               IrrigationRunType runType) {
   HTTPClient http;
   http.setTimeout(2000);
-  if (!http.begin(INFLUXDB_WRITE_URL)) {
+  http.addHeader("Authorization", INFLUXDB_TOKEN);
+
+  if (!http.begin(INFLUXDB_URL)) {
     printStringLn("InfluxDB request setup failed");
     return;
   }
