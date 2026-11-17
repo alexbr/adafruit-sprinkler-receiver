@@ -8,6 +8,7 @@
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
+#include <HTTPClient.h>
 #include <NTPClient.h>
 #include <TimeLib.h>
 #include <Timezone.h>
@@ -30,12 +31,15 @@ char sprinklerStartDisplay[50] = "Hello\n";
 char sprinklerDurationDisplay[50] = "Rodriguez!";
 
 time_t lastRunStartTime = 0;
+time_t lastRunStartEpoch = 0;
 unsigned long lastRunDurationMs = 0;
 
 // Internet setup
 WebServer server(80);
 unsigned long checkServerTime = 0;
 unsigned long lastHeapLog = 0;  // for periodic heap logging
+static const char* INFLUXDB_WRITE_URL =
+    "http://ha-server.rodriguez.lan:8086/write?precision=ms";
 
 // Display
 Adafruit_SH1107 display = Adafruit_SH1107(64, 128, &Wire);
@@ -64,6 +68,7 @@ static void setSprinklerOn();
 static void setSprinklerOff();
 static void pulseLatch(int pin);
 static void scrollDisplayText(const char* str);
+static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs);
 
 void setup() {
   Serial.begin(115200);
@@ -166,14 +171,14 @@ void loop() {
     char buffer[64];
     unsigned long duration = millis() - sprinklerStart;
     if (manualOverride != 0) {
-      unsigned long remaining = manualOverride - millis(); 
+      unsigned long remaining = manualOverride - millis();
       snprintf(buffer, sizeof(buffer), "Running:\n%.1f mins\nRemaining:\n%.1f mins",
                duration / 60000.0, remaining / 60000.0);
     } else {
       snprintf(buffer, sizeof(buffer), "Running:\n%.1f mins",
                duration / 60000.0);
     }
-      printDisplay(buffer);
+    printDisplay(buffer);
   } else {
     char buffer[sizeof(sprinklerStartDisplay) +
                 sizeof(sprinklerDurationDisplay) + 2];
@@ -189,17 +194,17 @@ void loop() {
   }
 }
 
-void buttonAPressed(bool longPress) { 
+void buttonAPressed(bool longPress) {
   displayInfoOverride = false;
-  sprinklerOnButtonHandler(longPress); 
+  sprinklerOnButtonHandler(longPress);
 }
 
-void buttonBPressed(bool longPress) { 
+void buttonBPressed(bool longPress) {
   displayInfoOverride = false;
-  sprinklerOffButtonHandler(); 
+  sprinklerOffButtonHandler();
 }
 
-void buttonCPressed(bool longPress) { 
+void buttonCPressed(bool longPress) {
   displayInfoOverride = longPress;
   displayOnWithTimeout();
 }
@@ -213,7 +218,7 @@ void sprinklerOnButtonHandler(bool longPress) {
     printStringLn("running sprinkler for 30 mins");
     manualOverride = millis() + MANUAL_OVERRIDE_30;
   }
-  
+
   setSprinklerOn();
   displayOnWithTimeout();
 }
@@ -260,7 +265,8 @@ static void setSprinklerOn() {
   printStringLn("turning sprinkler on");
   sprinklerState = ON;
   sprinklerStart = millis();
-  time_t t = myTZ.toLocal(now());
+  lastRunStartEpoch = now();
+  time_t t = myTZ.toLocal(lastRunStartEpoch);
   lastRunStartTime = t;
 
   snprintf(sprinklerStartDisplay, sizeof(sprinklerStartDisplay),
@@ -272,8 +278,12 @@ static void setSprinklerOn() {
 static void setSprinklerOff() {
   printStringLn("turning sprinkler off");
 
-  if (sprinklerState == ON) {
-    unsigned long duration = millis() - sprinklerStart;
+  bool completedRun = sprinklerState == ON;
+  unsigned long duration = 0;
+  time_t startEpoch = 0;
+  if (completedRun) {
+    duration = millis() - sprinklerStart;
+    startEpoch = lastRunStartEpoch;
     lastRunDurationMs = duration;
     sprinklerState = OFF;
     sprinklerStart = 0;
@@ -284,6 +294,42 @@ static void setSprinklerOff() {
 
   // Always turn off to be safe
   pulseLatch(TRIGGER_PIN_OFF);
+
+  // Record only runs that actually transitioned from ON to OFF.
+  if (completedRun) {
+    writeRunToInfluxDB(startEpoch, duration);
+  }
+}
+
+static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs) {
+  HTTPClient http;
+  http.setTimeout(2000);
+  if (!http.begin(INFLUXDB_WRITE_URL)) {
+    printStringLn("InfluxDB request setup failed");
+    return;
+  }
+
+  char lineProtocol[128];
+  int lineLength;
+  // Use the run's UTC start time when NTP is available; otherwise let InfluxDB
+  // assign the write time.
+  if (startEpoch >= 1609459200) {
+    long long timestampMs = (long long)startEpoch * 1000LL;
+    lineLength = snprintf(lineProtocol, sizeof(lineProtocol),
+                          "irrigation_run duration_ms=%lui %lld",
+                          durationMs, timestampMs);
+  } else {
+    lineLength = snprintf(lineProtocol, sizeof(lineProtocol),
+                          "irrigation_run duration_ms=%lui", durationMs);
+  }
+
+  int responseCode = http.POST((uint8_t*)lineProtocol, lineLength);
+  if (responseCode >= 200 && responseCode < 300) {
+    printStringLn("InfluxDB irrigation run recorded");
+  } else {
+    Serial.printf("InfluxDB write failed, HTTP status=%d\n", responseCode);
+  }
+  http.end();
 }
 
 void infoHandler() {
@@ -432,7 +478,6 @@ static void scrollDisplayText(const char* str) {
     }
     y += 16;
   }
-
 }
 
 time_t getTime() { return ntpClient.getTime(); }
