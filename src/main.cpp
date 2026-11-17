@@ -310,12 +310,14 @@ static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs,
                               IrrigationRunType runType) {
   HTTPClient http;
   http.setTimeout(2000);
-  http.addHeader("Authorization", INFLUXDB_TOKEN);
 
   if (!http.begin(INFLUXDB_URL)) {
     printStringLn("InfluxDB request setup failed");
     return;
   }
+
+  http.addHeader("Authorization", "Token " INFLUXDB_TOKEN);
+  http.addHeader("Content-Type", "text/plain");
 
   const char* runTypeTag = (runType == MANUAL) ? "manual" : "automatic";
   char lineProtocol[128];
@@ -336,6 +338,10 @@ static void writeRunToInfluxDB(time_t startEpoch, unsigned long durationMs,
     printStringLn("InfluxDB irrigation run recorded");
   } else {
     Serial.printf("InfluxDB write failed, HTTP status=%d\n", responseCode);
+    String responseBody = http.getString();
+    if (responseBody.length() > 0) {
+      Serial.printf("InfluxDB response: %s\n", responseBody.c_str());
+    }
   }
   http.end();
 }
