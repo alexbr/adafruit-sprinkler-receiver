@@ -5,3 +5,7 @@ This sets up an Adafruit WiFi Feather board to act as a remote sprinkler receive
 This module turns on a latching relay when `on` and turns off the relay when `off`. The relay controls 24VAC to the sprinkler valve.
 
 Alse see [the client code](https://github.com/alexbr/arduino-sprinkler-client).
+
+The circuit I am using to run this is shown below.
+
+![Circuit Diagram](./circuit-diagram.png)
